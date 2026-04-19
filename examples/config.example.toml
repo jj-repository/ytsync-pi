@@ -1,0 +1,41 @@
+# ytsync-pi example config
+# Copy to ~/.config/ytsync-pi/config.toml and edit.
+
+cookies_path     = "~/.config/ytsync-pi/cookies.txt"
+output_audio_dir = "/mnt/nas/music/youtube"
+output_video_dir = "/mnt/nas/video/youtube"
+db_path          = "~/.local/share/ytsync-pi/state.db"
+lock_path        = "~/.local/state/ytsync-pi/run.lock"
+
+bitrate                = "320k"
+rate_limit             = "2M"
+retries                = 3
+retry_backoff_sec      = 60
+sleep_interval_sec     = 5
+max_sleep_interval_sec = 15
+per_item_timeout_sec   = 1800
+min_free_disk_gb       = 2
+
+[ntfy]
+server = "https://ntfy.sh"
+topic  = "ytsync-pi-alerts"
+
+[musicbrainz]
+acoustid_api_key = "REPLACE_ME"
+enabled          = true
+
+[[sources]]
+name = "Likes"
+url  = "https://www.youtube.com/playlist?list=LL"
+mode = "audio"
+
+[[sources]]
+name = "Study"
+url  = "https://www.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxxxx"
+mode = "audio"
+
+[[sources]]
+name    = "Tutorials"
+url     = "https://www.youtube.com/playlist?list=PLyyyyyyyyyyyyyyy"
+mode    = "video"
+quality = "1080p"

@@ -1,0 +1,7 @@
+/target
+*.db
+*.db-wal
+*.db-shm
+cookies.txt
+config.toml
+!examples/config.example.toml

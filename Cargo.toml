@@ -1,0 +1,29 @@
+[package]
+name = "ytsync-pi"
+version = "0.1.0"
+edition = "2021"
+description = "Sync YouTube playlists/likes to NAS as MP3 (MusicBrainz tags) or MKV video"
+license = "MIT"
+
+[[bin]]
+name = "ytsync-pi"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+fs2 = "0.4"
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+shellexpand = "3"
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
