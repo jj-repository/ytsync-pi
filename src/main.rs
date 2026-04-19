@@ -1,10 +1,14 @@
-// Phase 1 scaffold: many DB/config surfaces exist for the phase-2 sync pipeline.
-// Remove this allow once phase 2 wires them up.
+// Phase 3: config/DB/yt-dlp error surfaces exist for MusicBrainz (phase 4),
+// video mode (phase 5), and ntfy (phase 7). Remove this allow as those
+// phases wire the fields in.
 #![allow(dead_code)]
 
 mod config;
 mod db;
 mod lock;
+mod preflight;
+mod sync;
+mod ytdlp;
 mod ytdlp_updater;
 
 use anyhow::{Context, Result};
@@ -74,9 +78,14 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
                 "another ytsync-pi run holds the lock at {}; exiting",
                 cfg.lock_path.display()
             );
-            return Ok(());
+            std::process::exit(2);
         }
     };
+
+    let report = preflight::run(&cfg)?;
+    if let Some(days) = report.cookies_age_days {
+        info!("cookies file age: {days} days");
+    }
 
     let database = db::Db::open(&cfg.db_path)?;
     let run_id = database.start_run()?;
@@ -98,10 +107,17 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         .unwrap_or_else(|e| format!("<version probe failed: {e}>"));
     info!("yt-dlp version: {version}");
 
-    // Phase 3 will plug the sync pipeline in here.
-    let notes = format!("phase-2 scaffold: yt-dlp={version}; sync pipeline not yet implemented");
-    database.finish_run(run_id, 0, 0, Some(&notes))?;
-    info!("run {run_id} finished (yt-dlp checked, no sync yet)");
+    let stats = sync::run_sync(&cfg, &database, &updater);
+
+    let notes = format!(
+        "yt-dlp={version}; ok={} fail={} skipped_sources={}",
+        stats.ok, stats.failed, stats.skipped_sources
+    );
+    database.finish_run(run_id, stats.ok, stats.failed, Some(&notes))?;
+    info!(
+        "run {run_id} finished: ok={} fail={} skipped_sources={}",
+        stats.ok, stats.failed, stats.skipped_sources
+    );
     Ok(())
 }
 
@@ -130,8 +146,34 @@ fn cmd_test_cookies(cfg_path: &std::path::Path) -> Result<()> {
         anyhow::bail!("cookies file not found at {}", cfg.cookies_path.display());
     }
     info!("cookies file present at {}", cfg.cookies_path.display());
-    info!("(live YouTube probe will be added in phase 3)");
-    Ok(())
+
+    let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
+    updater.ensure_installed()?;
+    let yt = ytdlp::YtDlp::new(updater.binary_path(), &cfg);
+
+    let first = cfg
+        .sources
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("no sources configured"))?;
+    info!("probing with first source {:?} ({})", first.name, first.url);
+    match yt.list_playlist(&first.url) {
+        Ok(entries) => {
+            println!(
+                "cookies OK — listed {} entries from {:?}",
+                entries.len(),
+                first.name
+            );
+            if let Some(sample) = entries.first() {
+                println!("  first entry: {} | {}", sample.id, sample.title);
+            }
+            Ok(())
+        }
+        Err(e) => Err(anyhow::anyhow!(
+            "cookies probe failed: {}; stderr: {}",
+            e.message,
+            e.stderr.trim()
+        )),
+    }
 }
 
 fn cmd_show_config(cfg_path: &std::path::Path) -> Result<()> {
