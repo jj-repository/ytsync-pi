@@ -20,6 +20,17 @@ File: `~/.config/ytsync-pi/config.toml` (override with `-c <path>`). Paths suppo
 | `per_item_timeout_sec` | int | `1800` | Hard timeout per video |
 | `min_free_disk_gb` | int | `2` | Abort if target mount has less free |
 
+## `[yt_dlp]`
+
+| Key | Type | Default | Purpose |
+|-----|------|---------|---------|
+| `binary_path` | path | `~/.local/bin/yt-dlp` | Standalone yt-dlp binary |
+| `auto_update` | bool | `true` | Run age-based update before each sync |
+| `update_if_older_than_days` | int | `3` | Staleness threshold |
+| `channel` | enum | `"nightly"` | `stable` / `nightly` / `master` |
+| `update_on_extract_error` | bool | `true` | Trigger update + single retry on extraction failures |
+| `update_timeout_sec` | int | `120` | Hard cap on `yt-dlp -U` wall time |
+
 ## `[ntfy]`
 
 | Key | Type | Purpose |

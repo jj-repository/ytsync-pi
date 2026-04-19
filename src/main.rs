@@ -5,6 +5,7 @@
 mod config;
 mod db;
 mod lock;
+mod ytdlp_updater;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -37,6 +38,8 @@ enum Command {
     TestCookies,
     /// Print the resolved config and exit
     ShowConfig,
+    /// Force an immediate yt-dlp self-update regardless of binary age
+    UpdateYtdlp,
 }
 
 fn main() -> Result<()> {
@@ -58,6 +61,7 @@ fn main() -> Result<()> {
         Command::Status => cmd_status(&cfg_path),
         Command::TestCookies => cmd_test_cookies(&cfg_path),
         Command::ShowConfig => cmd_show_config(&cfg_path),
+        Command::UpdateYtdlp => cmd_update_ytdlp(&cfg_path),
     }
 }
 
@@ -82,10 +86,22 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         cfg.sources.len()
     );
 
-    // Phase 2 will plug the sync pipeline in here.
-    let notes = "scaffold run — sync pipeline not yet implemented";
-    database.finish_run(run_id, 0, 0, Some(notes))?;
-    info!("run {} finished (no-op scaffold)", run_id);
+    let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
+    if let Err(e) = updater.ensure_installed() {
+        database.finish_run(run_id, 0, 0, Some(&format!("yt-dlp not installed: {e}")))?;
+        return Err(e);
+    }
+
+    let _update_outcome = updater.ensure_fresh();
+    let version = updater
+        .version()
+        .unwrap_or_else(|e| format!("<version probe failed: {e}>"));
+    info!("yt-dlp version: {version}");
+
+    // Phase 3 will plug the sync pipeline in here.
+    let notes = format!("phase-2 scaffold: yt-dlp={version}; sync pipeline not yet implemented");
+    database.finish_run(run_id, 0, 0, Some(&notes))?;
+    info!("run {run_id} finished (yt-dlp checked, no sync yet)");
     Ok(())
 }
 
@@ -114,7 +130,7 @@ fn cmd_test_cookies(cfg_path: &std::path::Path) -> Result<()> {
         anyhow::bail!("cookies file not found at {}", cfg.cookies_path.display());
     }
     info!("cookies file present at {}", cfg.cookies_path.display());
-    info!("(live YouTube probe will be added in phase 2)");
+    info!("(live YouTube probe will be added in phase 3)");
     Ok(())
 }
 
@@ -122,5 +138,25 @@ fn cmd_show_config(cfg_path: &std::path::Path) -> Result<()> {
     let cfg = config::Config::load(cfg_path)
         .with_context(|| format!("loading {}", cfg_path.display()))?;
     println!("{cfg:#?}");
+    Ok(())
+}
+
+fn cmd_update_ytdlp(cfg_path: &std::path::Path) -> Result<()> {
+    let cfg = config::Config::load(cfg_path)?;
+    let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
+    updater.ensure_installed()?;
+    let before = updater
+        .version()
+        .unwrap_or_else(|_| "<unknown>".to_string());
+    info!("yt-dlp before: {before}");
+    let outcome = updater.update_now();
+    if !outcome.succeeded {
+        anyhow::bail!("yt-dlp update failed; stderr: {}", outcome.stderr.trim());
+    }
+    let after = outcome
+        .new_version
+        .clone()
+        .unwrap_or_else(|| "<unknown>".to_string());
+    println!("yt-dlp: {before} -> {after}");
     Ok(())
 }

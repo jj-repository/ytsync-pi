@@ -31,8 +31,57 @@ pub struct Config {
     pub ntfy: Option<NtfyConfig>,
     #[serde(default)]
     pub musicbrainz: Option<MusicBrainzConfig>,
+    #[serde(default)]
+    pub yt_dlp: YtDlpConfig,
 
     pub sources: Vec<Source>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct YtDlpConfig {
+    #[serde(default = "default_ytdlp_binary")]
+    pub binary_path: PathBuf,
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+    #[serde(default = "default_update_age_days")]
+    pub update_if_older_than_days: u64,
+    #[serde(default = "default_channel")]
+    pub channel: YtDlpChannel,
+    #[serde(default = "default_true")]
+    pub update_on_extract_error: bool,
+    #[serde(default = "default_update_timeout")]
+    pub update_timeout_sec: u64,
+}
+
+impl Default for YtDlpConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: default_ytdlp_binary(),
+            auto_update: true,
+            update_if_older_than_days: default_update_age_days(),
+            channel: default_channel(),
+            update_on_extract_error: true,
+            update_timeout_sec: default_update_timeout(),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum YtDlpChannel {
+    Stable,
+    Nightly,
+    Master,
+}
+
+impl YtDlpChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            YtDlpChannel::Stable => "stable",
+            YtDlpChannel::Nightly => "nightly",
+            YtDlpChannel::Master => "master",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -91,6 +140,21 @@ fn default_min_free_gb() -> u64 {
 fn default_mb_enabled() -> bool {
     true
 }
+fn default_true() -> bool {
+    true
+}
+fn default_ytdlp_binary() -> PathBuf {
+    PathBuf::from("~/.local/bin/yt-dlp")
+}
+fn default_update_age_days() -> u64 {
+    3
+}
+fn default_channel() -> YtDlpChannel {
+    YtDlpChannel::Nightly
+}
+fn default_update_timeout() -> u64 {
+    120
+}
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -109,6 +173,7 @@ impl Config {
         self.output_video_dir = expand(&self.output_video_dir)?;
         self.db_path = expand(&self.db_path)?;
         self.lock_path = expand(&self.lock_path)?;
+        self.yt_dlp.binary_path = expand(&self.yt_dlp.binary_path)?;
         Ok(())
     }
 

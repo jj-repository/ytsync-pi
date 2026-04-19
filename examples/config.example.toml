@@ -16,6 +16,14 @@ max_sleep_interval_sec = 15
 per_item_timeout_sec   = 1800
 min_free_disk_gb       = 2
 
+[yt_dlp]
+binary_path               = "~/.local/bin/yt-dlp"
+auto_update               = true
+update_if_older_than_days = 3
+channel                   = "nightly"   # "stable" | "nightly" | "master"
+update_on_extract_error   = true
+update_timeout_sec        = 120
+
 [ntfy]
 server = "https://ntfy.sh"
 topic  = "ytsync-pi-alerts"

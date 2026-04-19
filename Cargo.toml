@@ -20,6 +20,7 @@ shellexpand = "3"
 toml = "0.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wait-timeout = "0.2"
 
 [profile.release]
 lto = true
