@@ -32,8 +32,8 @@ Copy `examples/config.example.toml` to `~/.config/ytsync-pi/config.toml` and edi
 
 - `yt-dlp`
 - `ffmpeg`
-- `fpcalc` (Chromaprint) — for MusicBrainz fingerprinting
-- AcoustID API key — free at https://acoustid.org/new-application
+- `fpcalc` (Chromaprint) — `apt install libchromaprint-tools` on Debian/Pi. Optional: without it, tracks still download with Tier-1 tags but no MusicBrainz enrichment.
+- AcoustID API key — free at https://acoustid.org/new-application. Required to unlock MusicBrainz lookup.
 
 ## Build
 

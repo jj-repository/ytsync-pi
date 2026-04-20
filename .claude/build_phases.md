@@ -3,7 +3,7 @@
 1. **Bootstrap** — Rust binary, TOML config, SQLite schema, lock file, CLI skeleton. ✅ **Done 2026-04-19.**
 2. **yt-dlp updater** — pre-run mtime check against `update_if_older_than_days`, self-update via `yt-dlp -U --update-to <channel>` (nightly default), version probe logged to every run, manual `update-ytdlp` subcommand. Failed update is non-fatal; fall through to the existing binary. ✅ **Done 2026-04-19.**
 3. **Core sync** — yt-dlp subprocess wrapper, one playlist audio end-to-end, MP3 output with Tier-1 (yt-dlp embed-metadata) tags. Extraction-failure retry triggers a yt-dlp update + single retry before giving up. ✅ **Done 2026-04-19.**
-4. **MusicBrainz tagging** — Chromaprint (`fpcalc`) → AcoustID → MusicBrainz API → ID3 enrichment. 1 req/sec MB rate limit.
+4. **MusicBrainz tagging** — Chromaprint (`fpcalc`) → AcoustID → MusicBrainz API → ID3 enrichment. 1 req/sec MB rate limit. ✅ **Done 2026-04-20.**
 5. **Video mode + retries** — `mode = "video"` sources, MKV output (`bv*+ba/b`, `--merge-output-format mkv`), per-item retry/backoff, failure table.
 6. **systemd unit + timer + hardening** — drop-in `.service`/`.timer`, resource caps, `RequiresMountsFor=`, journald logging.
 7. **Alerts + introspection** — ntfy on failures, `status` summary, `test-cookies` live probe.

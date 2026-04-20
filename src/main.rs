@@ -6,6 +6,7 @@
 mod config;
 mod db;
 mod lock;
+mod musicbrainz;
 mod preflight;
 mod sync;
 mod ytdlp;
@@ -110,13 +111,18 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
     let stats = sync::run_sync(&cfg, &database, &updater);
 
     let notes = format!(
-        "yt-dlp={version}; ok={} fail={} skipped_sources={}",
-        stats.ok, stats.failed, stats.skipped_sources
+        "yt-dlp={version}; ok={} fail={} skipped_sources={} tagged={} tag_no_match={} tag_skipped={}",
+        stats.ok,
+        stats.failed,
+        stats.skipped_sources,
+        stats.tagged,
+        stats.tag_no_match,
+        stats.tag_skipped,
     );
     database.finish_run(run_id, stats.ok, stats.failed, Some(&notes))?;
     info!(
-        "run {run_id} finished: ok={} fail={} skipped_sources={}",
-        stats.ok, stats.failed, stats.skipped_sources
+        "run {run_id} finished: ok={} fail={} skipped_sources={} tagged={}",
+        stats.ok, stats.failed, stats.skipped_sources, stats.tagged
     );
     Ok(())
 }

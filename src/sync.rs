@@ -5,6 +5,7 @@ use tracing::{info, warn};
 
 use crate::config::{Config, Source, SourceMode};
 use crate::db::{Db, ItemMode};
+use crate::musicbrainz::{TagOutcome, Tagger};
 use crate::ytdlp::{archive_path_for, DownloadResult, PlaylistEntry, YtDlp};
 use crate::ytdlp_updater::YtDlpUpdater;
 
@@ -12,6 +13,9 @@ pub struct SyncStats {
     pub ok: u64,
     pub failed: u64,
     pub skipped_sources: u64,
+    pub tagged: u64,
+    pub tag_no_match: u64,
+    pub tag_skipped: u64,
 }
 
 struct SyncCtx<'a> {
@@ -19,6 +23,7 @@ struct SyncCtx<'a> {
     db: &'a Db,
     yt: YtDlp<'a>,
     updater: &'a YtDlpUpdater,
+    tagger: Option<Tagger>,
     archive: PathBuf,
     updated_this_run: bool,
     stats: SyncStats,
@@ -35,21 +40,29 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
                 ok: 0,
                 failed: 1,
                 skipped_sources: 0,
+                tagged: 0,
+                tag_no_match: 0,
+                tag_skipped: 0,
             };
         }
     };
 
+    let tagger = cfg.musicbrainz.as_ref().map(|m| Tagger::new(m.clone()));
     let mut ctx = SyncCtx {
         cfg,
         db,
         yt: YtDlp::new(updater.binary_path(), cfg),
         updater,
+        tagger,
         archive,
         updated_this_run: false,
         stats: SyncStats {
             ok: 0,
             failed: 0,
             skipped_sources: 0,
+            tagged: 0,
+            tag_no_match: 0,
+            tag_skipped: 0,
         },
     };
 
@@ -138,6 +151,7 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, entries: &[PlaylistEntry]) {
                 }
                 info!("✓ {} → {}", entry.id, result.file_path.display());
                 ctx.stats.ok += 1;
+                enrich_tags(ctx, &result);
             }
             Err(err_msg) => {
                 if let Err(e) =
@@ -193,4 +207,36 @@ fn download_with_retries(
         }
     }
     Err(last_err)
+}
+
+fn enrich_tags(ctx: &mut SyncCtx, result: &DownloadResult) {
+    let Some(tagger) = ctx.tagger.as_ref() else {
+        return;
+    };
+    if !tagger.enabled() {
+        return;
+    }
+    match tagger.tag_mp3(&result.file_path) {
+        TagOutcome::Enriched(tags) => {
+            ctx.stats.tagged += 1;
+            info!(
+                "  tagged: artist={:?} album={:?} year={:?} genres={}",
+                tags.artist,
+                tags.album,
+                tags.year,
+                tags.genres.join(",")
+            );
+        }
+        TagOutcome::NoMatch => {
+            ctx.stats.tag_no_match += 1;
+            info!("  no MusicBrainz match for {}", result.file_path.display());
+        }
+        TagOutcome::Skipped(reason) => {
+            ctx.stats.tag_skipped += 1;
+            warn!(
+                "  tagging skipped for {}: {reason}",
+                result.file_path.display()
+            );
+        }
+    }
 }
