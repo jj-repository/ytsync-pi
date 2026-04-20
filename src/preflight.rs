@@ -81,7 +81,12 @@ fn check_cookies(cfg: &Config) -> Result<()> {
 fn cookies_age_days(path: &Path) -> Option<u64> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta.modified().ok()?;
-    let age = SystemTime::now().duration_since(mtime).ok()?;
+    // `duration_since` errors when `now < mtime`, which happens on a Pi booted
+    // without NTP sync (no RTC). Saturate to zero so the warning still evaluates
+    // against a real age once the clock catches up.
+    let age = SystemTime::now()
+        .duration_since(mtime)
+        .unwrap_or(Duration::ZERO);
     let days = age.as_secs() / 86_400;
     if age > Duration::from_secs(30 * 86_400) {
         warn!(

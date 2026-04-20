@@ -248,7 +248,10 @@ impl Tagger {
     }
 
     fn throttle_mb(&self) {
-        let mut guard = self.mb_last_call.lock().expect("mb_last_call poisoned");
+        // Recover from poison: the stored Instant is safe to reuse even if a
+        // prior holder panicked, and we'd rather keep tagging running than abort
+        // the whole run over a harmless mutex.
+        let mut guard = self.mb_last_call.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(last) = *guard {
             let elapsed = Instant::now().saturating_duration_since(last);
             if elapsed < MB_MIN_INTERVAL {

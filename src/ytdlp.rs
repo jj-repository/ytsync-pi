@@ -356,7 +356,7 @@ struct InvocationOutput {
 
 /// Per-stream read cap. 1 MiB is generous for yt-dlp's regular chatter but
 /// stops a debug-log blowup from eating the service's 200M RAM cap.
-const STREAM_CAP_BYTES: usize = 1_048_576;
+pub(crate) const STREAM_CAP_BYTES: usize = 1_048_576;
 
 fn run_with_timeout(
     mut cmd: Command,
@@ -428,7 +428,7 @@ fn run_with_timeout(
 
 /// Reads until EOF, keeping at most `cap` bytes. Continues to drain past the
 /// cap (discarding) so the child process never blocks writing to a full pipe.
-fn drain_capped<R: std::io::Read>(mut r: R, cap: usize) -> (Vec<u8>, bool) {
+pub(crate) fn drain_capped<R: std::io::Read>(mut r: R, cap: usize) -> (Vec<u8>, bool) {
     let mut buf: Vec<u8> = Vec::with_capacity(std::cmp::min(cap, 16 * 1024));
     let mut chunk = [0u8; 8192];
     let mut truncated = false;

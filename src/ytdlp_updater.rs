@@ -143,6 +143,18 @@ impl YtDlpUpdater {
             }
         };
 
+        // Drain pipes on dedicated threads before waiting, so the child can never
+        // block on a full 64 KiB OS pipe buffer (same pattern as run_with_timeout
+        // in ytdlp.rs). Without this, a chatty -U run deadlocks the wait.
+        let stdout_pipe = child.stdout.take().expect("stdout was piped");
+        let stderr_pipe = child.stderr.take().expect("stderr was piped");
+        let stdout_handle = std::thread::spawn(move || {
+            crate::ytdlp::drain_capped(stdout_pipe, crate::ytdlp::STREAM_CAP_BYTES)
+        });
+        let stderr_handle = std::thread::spawn(move || {
+            crate::ytdlp::drain_capped(stderr_pipe, crate::ytdlp::STREAM_CAP_BYTES)
+        });
+
         let timeout = Duration::from_secs(self.cfg.update_timeout_sec);
         let status = match child.wait_timeout(timeout) {
             Ok(Some(s)) => s,
@@ -153,26 +165,24 @@ impl YtDlpUpdater {
                 );
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
                 return UpdateOutcome::failed(String::new(), "update timed out".to_string());
             }
             Err(e) => {
                 warn!("yt-dlp -U wait error: {e}");
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = stdout_handle.join();
+                let _ = stderr_handle.join();
                 return UpdateOutcome::failed(String::new(), e.to_string());
             }
         };
 
-        let out = match child.wait_with_output() {
-            Ok(o) => o,
-            Err(e) => {
-                warn!("yt-dlp -U output read failed: {e}");
-                return UpdateOutcome::failed(String::new(), e.to_string());
-            }
-        };
-
-        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        let (stdout_bytes, _) = stdout_handle.join().unwrap_or_default();
+        let (stderr_bytes, _) = stderr_handle.join().unwrap_or_default();
+        let stdout = String::from_utf8_lossy(&stdout_bytes).to_string();
+        let stderr = String::from_utf8_lossy(&stderr_bytes).to_string();
 
         if !status.success() {
             warn!(

@@ -45,7 +45,9 @@ impl RunLock {
 
 impl Drop for RunLock {
     fn drop(&mut self) {
+        // Release the advisory lock and close the fd (via File's Drop). Do NOT
+        // unlink the lock file: flock is tied to the inode, and unlink-then-create
+        // races let two runs hold "the lock" on different inodes concurrently.
         let _ = FileExt::unlock(&self.file);
-        let _ = std::fs::remove_file(&self.path);
     }
 }
