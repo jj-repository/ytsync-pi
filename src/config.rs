@@ -221,6 +221,18 @@ impl Config {
                 anyhow::bail!("source {} has empty url", s.name);
             }
         }
+        // Zero-valued timeouts have pathological behavior: per_item_timeout_sec=0
+        // fails every item before the first attempt, retry_backoff_sec=0 retries
+        // in a tight loop, update_timeout_sec=0 kills yt-dlp -U on spawn.
+        if self.per_item_timeout_sec == 0 {
+            anyhow::bail!("per_item_timeout_sec must be > 0");
+        }
+        if self.retry_backoff_sec == 0 {
+            anyhow::bail!("retry_backoff_sec must be > 0");
+        }
+        if self.yt_dlp.update_timeout_sec == 0 {
+            anyhow::bail!("yt_dlp.update_timeout_sec must be > 0");
+        }
         Ok(())
     }
 }
