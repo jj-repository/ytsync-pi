@@ -1,0 +1,56 @@
+[Unit]
+Description=Sync YouTube playlists/likes to NAS
+Documentation=https://github.com/jj-repository/ytsync-pi
+# Coexist nicely with the rest of the Pi stack — do not start until the
+# network is up, and bail cleanly if the NAS mount is not available.
+After=network-online.target
+Wants=network-online.target
+# Edit the path below to match where the NAS music/video dirs live.
+# RequiresMountsFor=/mnt/nas
+
+[Service]
+Type=oneshot
+# Exit code 2 = another run holds the flock. Not a failure.
+SuccessExitStatus=2
+ExecStart=%h/.local/bin/ytsync-pi run
+
+# --- Resource caps ---
+# Tight caps so the Pi does not notice this running alongside Pi-hole,
+# Headscale and the NAS stack. Bump MemoryMax only if runs start OOM-killing.
+CPUQuota=25%
+MemoryMax=200M
+MemorySwapMax=0
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+Nice=19
+TasksMax=50
+
+# --- Hardening ---
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+# yt-dlp + ffmpeg run as child processes; keep PrivateDevices off so /dev/null
+# is available, but disable access to raw hardware.
+ProtectProc=invisible
+# Filesystem: strict by default; whitelist only what ytsync-pi writes to.
+# If your NAS mount is somewhere other than /mnt/nas, edit ReadWritePaths.
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/ytsync-pi %h/.local/state/ytsync-pi %h/.cache/ytsync-pi /mnt/nas
+# System call filter: keep the service-profile allowlist, subtract privileged ops.
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+Environment=RUST_LOG=info
+
+[Install]
+WantedBy=default.target

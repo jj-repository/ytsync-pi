@@ -1,0 +1,15 @@
+[Unit]
+Description=Weekly ytsync-pi cookies canary
+Documentation=https://github.com/jj-repository/ytsync-pi
+
+[Timer]
+# Weekly canary probe that runs `test-cookies` against the first source.
+# Goal: catch cookie expiration even in weeks where the main sync has nothing
+# new to download and therefore no chance to emit auth-signature errors.
+OnCalendar=Sun 10:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=ytsync-pi-canary.service
+
+[Install]
+WantedBy=timers.target

@@ -8,6 +8,7 @@ Rust daemon for a Raspberry Pi that syncs YouTube playlists / Liked Videos to a 
 - [Build Phases](build_phases.md) — phased roadmap and current status
 - [Config Schema](config_schema.md) — TOML fields, defaults, source modes
 - [Runtime Contract](runtime_contract.md) — lock, DB, exit codes, failure handling
+- [Deploy](deploy.md) — Pi install, systemd units, resource caps, uninstall
 
 ## Quick facts
 

@@ -1,0 +1,39 @@
+[Unit]
+Description=Probe YouTube cookies via ytsync-pi test-cookies
+Documentation=https://github.com/jj-repository/ytsync-pi
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Canary is a read-only probe; a non-zero exit trips journald so the main
+# sync's failure channel catches it even when no download is due.
+ExecStart=%h/.local/bin/ytsync-pi test-cookies
+
+# Lighter caps — the probe barely does anything.
+CPUQuota=15%
+MemoryMax=100M
+MemorySwapMax=0
+Nice=19
+TasksMax=20
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectProc=invisible
+ProtectSystem=strict
+ReadWritePaths=%h/.local/share/ytsync-pi %h/.local/state/ytsync-pi %h/.cache/ytsync-pi
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+
+Environment=RUST_LOG=info

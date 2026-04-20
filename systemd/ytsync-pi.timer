@@ -1,0 +1,15 @@
+[Unit]
+Description=Nightly ytsync-pi run
+Documentation=https://github.com/jj-repository/ytsync-pi
+
+[Timer]
+# Run once a day in the off-peak window, with jitter so multiple timers do
+# not all fire at the exact same instant.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=30min
+# If the Pi was powered off at the scheduled time, run as soon as it boots.
+Persistent=true
+Unit=ytsync-pi.service
+
+[Install]
+WantedBy=timers.target

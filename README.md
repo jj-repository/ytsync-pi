@@ -43,6 +43,22 @@ cargo build --release
 
 Release profile is tuned for a small binary (LTO, strip, `opt-level = "z"`, `panic = "abort"`).
 
+## Install on a Pi
+
+See [`.claude/deploy.md`](.claude/deploy.md) for the full walkthrough. The short version:
+
+```
+sudo apt install -y ffmpeg libchromaprint-tools
+install -m 0755 target/release/ytsync-pi ~/.local/bin/ytsync-pi
+cp examples/config.example.toml ~/.config/ytsync-pi/config.toml  # then edit
+./systemd/install.sh
+sudo loginctl enable-linger "$USER"
+```
+
+Timer fires daily at 03:30 (±30 min jitter) with CPU 25% / RAM 200M / IO idle.
+A weekly canary timer runs `test-cookies` on Sundays so cookies-expiration is
+caught even in weeks with nothing new to download.
+
 ## License
 
 MIT
