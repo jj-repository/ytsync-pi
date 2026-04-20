@@ -207,6 +207,130 @@ impl<'a> YtDlp<'a> {
 
         Ok(DownloadResult { file_path, title })
     }
+
+    /// Downloads one video id as MKV into `dest_dir`.
+    /// Native codecs from YouTube are kept (typically VP9 + Opus or AV1 + Opus)
+    /// to avoid Pi-side transcoding — container is MKV via --merge-output-format.
+    /// Optional `quality_cap` like "1080p" or "720p" limits height.
+    pub fn download_video(
+        &self,
+        video_id: &str,
+        dest_dir: &Path,
+        archive_path: &Path,
+        quality_cap: Option<&str>,
+    ) -> std::result::Result<DownloadResult, YtDlpError> {
+        std::fs::create_dir_all(dest_dir).map_err(|e| YtDlpError {
+            message: format!("create dest dir {}: {e}", dest_dir.display()),
+            stderr: String::new(),
+            exit_code: None,
+            looks_like_extractor: false,
+            looks_like_auth: false,
+            timed_out: false,
+        })?;
+        if let Some(parent) = archive_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| YtDlpError {
+                message: format!("create archive dir {}: {e}", parent.display()),
+                stderr: String::new(),
+                exit_code: None,
+                looks_like_extractor: false,
+                looks_like_auth: false,
+                timed_out: false,
+            })?;
+        }
+
+        let output_template = dest_dir.join("%(title)s.%(ext)s");
+        let url = format!("https://www.youtube.com/watch?v={video_id}");
+        let format_spec = build_video_format(quality_cap);
+
+        let mut cmd = Command::new(&self.binary);
+        cmd.arg("--cookies")
+            .arg(&self.cookies)
+            .arg("--download-archive")
+            .arg(archive_path)
+            .arg("--no-overwrites")
+            .arg("--no-progress")
+            .arg("--no-warnings")
+            .arg("--retries")
+            .arg("1")
+            .arg("--fragment-retries")
+            .arg("3")
+            .arg("--limit-rate")
+            .arg(&self.cfg.rate_limit)
+            .arg("--sleep-interval")
+            .arg(self.cfg.sleep_interval_sec.to_string())
+            .arg("--max-sleep-interval")
+            .arg(self.cfg.max_sleep_interval_sec.to_string())
+            .arg("-f")
+            .arg(&format_spec)
+            .arg("--merge-output-format")
+            .arg("mkv")
+            .arg("--embed-metadata")
+            .arg("--embed-thumbnail")
+            .arg("--embed-chapters")
+            .arg("--embed-subs")
+            .arg("--sub-langs")
+            .arg("en,de")
+            .arg("--print")
+            .arg("after_move:%(filepath)s")
+            .arg("-o")
+            .arg(&output_template)
+            .arg("--")
+            .arg(&url)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        let out = run_with_timeout(cmd, Duration::from_secs(self.cfg.per_item_timeout_sec))?;
+
+        if !out.exit_status.success() {
+            return Err(YtDlpError {
+                message: format!("video download failed for {video_id}"),
+                exit_code: out.exit_status.code(),
+                looks_like_extractor: YtDlpUpdater::looks_like_extraction_failure(&out.stderr),
+                looks_like_auth: YtDlpUpdater::looks_like_auth_failure(&out.stderr),
+                stderr: out.stderr,
+                timed_out: false,
+            });
+        }
+
+        let file_path = out
+            .stdout
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .map(|l| PathBuf::from(l.trim()))
+            .ok_or_else(|| YtDlpError {
+                message: format!("yt-dlp reported success but emitted no filepath for {video_id}"),
+                stderr: out.stderr.clone(),
+                exit_code: out.exit_status.code(),
+                looks_like_extractor: false,
+                looks_like_auth: false,
+                timed_out: false,
+            })?;
+
+        let title = file_path
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| video_id.to_string());
+
+        Ok(DownloadResult { file_path, title })
+    }
+}
+
+/// Builds the yt-dlp `-f` format expression for video downloads. Applies a
+/// height cap derived from a string like "1080p" when present.
+fn build_video_format(quality_cap: Option<&str>) -> String {
+    let height = quality_cap
+        .and_then(parse_quality_height)
+        .filter(|h| *h >= 144 && *h <= 4320);
+    match height {
+        Some(h) => format!("bv*[height<={h}]+ba/b[height<={h}]"),
+        None => "bv*+ba/b".to_string(),
+    }
+}
+
+fn parse_quality_height(q: &str) -> Option<u32> {
+    let trimmed = q.trim().trim_end_matches('p').trim_end_matches('P');
+    trimmed.parse::<u32>().ok()
 }
 
 struct InvocationOutput {
@@ -282,4 +406,37 @@ pub fn archive_path_for(cfg: &Config) -> Result<PathBuf> {
         .parent()
         .context("db_path has no parent directory")?;
     Ok(parent.join("ytdlp-archive.txt"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_format_without_cap() {
+        assert_eq!(build_video_format(None), "bv*+ba/b");
+    }
+
+    #[test]
+    fn video_format_with_quality_cap() {
+        assert_eq!(
+            build_video_format(Some("1080p")),
+            "bv*[height<=1080]+ba/b[height<=1080]"
+        );
+        assert_eq!(
+            build_video_format(Some("720P")),
+            "bv*[height<=720]+ba/b[height<=720]"
+        );
+        assert_eq!(
+            build_video_format(Some("480")),
+            "bv*[height<=480]+ba/b[height<=480]"
+        );
+    }
+
+    #[test]
+    fn nonsense_quality_falls_back_to_uncapped() {
+        assert_eq!(build_video_format(Some("hd")), "bv*+ba/b");
+        assert_eq!(build_video_format(Some("")), "bv*+ba/b");
+        assert_eq!(build_video_format(Some("9999p")), "bv*+ba/b"); // outside valid range
+    }
 }

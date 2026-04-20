@@ -30,8 +30,7 @@ struct SyncCtx<'a> {
     stats: SyncStats,
 }
 
-/// Orchestrates one sync cycle across all configured audio sources.
-/// Video-mode sources are skipped with a warning until phase 5.
+/// Orchestrates one sync cycle across every configured source, audio and video.
 pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
     let archive = match archive_path_for(cfg) {
         Ok(p) => p,
@@ -70,22 +69,20 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
     };
 
     for source in &cfg.sources {
-        match source.mode {
-            SourceMode::Audio => sync_audio_source(&mut ctx, source),
-            SourceMode::Video => {
-                warn!(
-                    "source {:?} is video-mode; skipped (video pipeline lands in phase 5)",
-                    source.name
-                );
-                ctx.stats.skipped_sources += 1;
-            }
-        }
+        let mode = match source.mode {
+            SourceMode::Audio => ItemMode::Audio,
+            SourceMode::Video => ItemMode::Video,
+        };
+        sync_source(&mut ctx, source, mode);
     }
     ctx.stats
 }
 
-fn sync_audio_source(ctx: &mut SyncCtx, source: &Source) {
-    info!("source {:?}: listing playlist", source.name);
+fn sync_source(ctx: &mut SyncCtx, source: &Source, mode: ItemMode) {
+    info!(
+        "source {:?} ({:?}): listing playlist",
+        source.name, source.mode
+    );
     let entries = match ctx.yt.list_playlist(&source.url) {
         Ok(e) => e,
         Err(e) => {
@@ -123,14 +120,14 @@ fn sync_audio_source(ctx: &mut SyncCtx, source: &Source) {
         }
     };
 
-    sync_entries(ctx, source, &entries);
+    sync_entries(ctx, source, mode, &entries);
 }
 
-fn sync_entries(ctx: &mut SyncCtx, source: &Source, entries: &[PlaylistEntry]) {
+fn sync_entries(ctx: &mut SyncCtx, source: &Source, mode: ItemMode, entries: &[PlaylistEntry]) {
     let total = entries.len();
     let mut new_items: Vec<PlaylistEntry> = Vec::new();
     for entry in entries {
-        match ctx.db.is_done(&entry.id, ItemMode::Audio) {
+        match ctx.db.is_done(&entry.id, mode) {
             Ok(true) => {}
             Ok(false) => new_items.push(entry.clone()),
             Err(e) => warn!("db check failed for {}: {e}", entry.id),
@@ -144,12 +141,12 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, entries: &[PlaylistEntry]) {
     );
 
     for entry in new_items {
-        match download_with_retries(ctx, source, &entry) {
+        match download_with_retries(ctx, source, mode, &entry) {
             Ok(result) => {
                 if let Err(e) = ctx.db.mark_done(
                     &entry.id,
                     &source.name,
-                    ItemMode::Audio,
+                    mode,
                     Some(&result.title),
                     &result.file_path,
                 ) {
@@ -157,12 +154,14 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, entries: &[PlaylistEntry]) {
                 }
                 info!("✓ {} → {}", entry.id, result.file_path.display());
                 ctx.stats.ok += 1;
-                enrich_tags(ctx, &result);
+                if mode == ItemMode::Audio {
+                    enrich_tags(ctx, &result);
+                }
             }
             Err(err_msg) => {
-                if let Err(e) =
-                    ctx.db
-                        .record_failure(&entry.id, &source.name, ItemMode::Audio, &err_msg)
+                if let Err(e) = ctx
+                    .db
+                    .record_failure(&entry.id, &source.name, mode, &err_msg)
                 {
                     warn!("db record_failure failed for {}: {e}", entry.id);
                 }
@@ -176,15 +175,26 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, entries: &[PlaylistEntry]) {
 fn download_with_retries(
     ctx: &mut SyncCtx,
     source: &Source,
+    mode: ItemMode,
     entry: &PlaylistEntry,
 ) -> Result<DownloadResult, String> {
     let attempts = ctx.cfg.retries.saturating_add(1).max(1);
     let archive: PathBuf = ctx.archive.clone();
-    let output_dir: PathBuf = ctx.cfg.output_audio_dir.clone();
+    let output_dir: PathBuf = match mode {
+        ItemMode::Audio => ctx.cfg.output_audio_dir.clone(),
+        ItemMode::Video => ctx.cfg.output_video_dir.clone(),
+    };
+    let quality_cap = source.quality.clone();
     let mut last_err = String::new();
 
     for attempt in 1..=attempts {
-        let res = ctx.yt.download_audio(&entry.id, &output_dir, &archive);
+        let res = match mode {
+            ItemMode::Audio => ctx.yt.download_audio(&entry.id, &output_dir, &archive),
+            ItemMode::Video => {
+                ctx.yt
+                    .download_video(&entry.id, &output_dir, &archive, quality_cap.as_deref())
+            }
+        };
         match res {
             Ok(r) => return Ok(r),
             Err(e) => {
