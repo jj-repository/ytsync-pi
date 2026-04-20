@@ -65,10 +65,12 @@ is caught even during weeks with no downloads).
 If your NAS mount is not at `/mnt/nas`, edit
 `~/.config/systemd/user/ytsync-pi.service`:
 
-- `RequiresMountsFor=` — uncomment and set to the mount root
+- `RequiresMountsFor=` — set to your mount root (defaults to `/mnt/nas`, delete the line if you do not use a network mount)
 - `ReadWritePaths=` — replace `/mnt/nas` with your mount
 
 Then `systemctl --user daemon-reload && systemctl --user restart ytsync-pi.timer`.
+If the NAS is not mounted at service start time, the service refuses to run
+rather than silently writing to local disk.
 
 ## Observability
 

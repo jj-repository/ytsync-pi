@@ -143,6 +143,18 @@ impl Db {
         Ok(())
     }
 
+    /// Deletes `failures` rows older than `days`. Without this, rows accumulate
+    /// monotonically over years of 24/7 operation. Returns number of rows
+    /// removed so the caller can log it.
+    pub fn prune_failures(&self, days: u64) -> Result<usize> {
+        let cutoff = now_epoch().saturating_sub((days as i64) * 86_400);
+        let n = self.conn.execute(
+            "DELETE FROM failures WHERE last_attempt_at < ?1",
+            params![cutoff],
+        )?;
+        Ok(n)
+    }
+
     pub fn start_run(&self) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO runs (started_at) VALUES (?1)",

@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+use wait_timeout::ChildExt;
 
 use crate::config::MusicBrainzConfig;
 
@@ -149,7 +150,7 @@ impl Tagger {
 
     fn acoustid_lookup(&self, duration: u32, fingerprint: &str) -> Result<Option<AcoustIdMatch>> {
         let url = "https://api.acoustid.org/v2/lookup";
-        let body: AcoustIdResponse = self
+        let resp = self
             .http
             .post(url)
             .send_form(&[
@@ -158,9 +159,8 @@ impl Tagger {
                 ("fingerprint", fingerprint),
                 ("meta", "recordings+releasegroups+tracks+releases+compress"),
             ])
-            .context("AcoustID request")?
-            .into_json()
-            .context("decode AcoustID response")?;
+            .context("AcoustID request")?;
+        let body: AcoustIdResponse = read_json_capped(resp).context("decode AcoustID response")?;
 
         if body.status != "ok" {
             anyhow::bail!(
@@ -234,13 +234,8 @@ impl Tagger {
         self.throttle_mb();
         let url =
             format!("https://musicbrainz.org/ws/2/recording/{recording_mbid}?inc=genres&fmt=json");
-        let body: MbRecording = self
-            .http
-            .get(&url)
-            .call()
-            .context("MusicBrainz request")?
-            .into_json()
-            .context("decode MusicBrainz response")?;
+        let resp = self.http.get(&url).call().context("MusicBrainz request")?;
+        let body: MbRecording = read_json_capped(resp).context("decode MusicBrainz response")?;
 
         let mut genres: Vec<_> = body
             .genres
@@ -279,18 +274,65 @@ struct AcoustIdMatch {
 
 // --- fpcalc ---
 
+/// fpcalc timeout. A healthy run on a 5-minute MP3 is under 2s on a Pi; 60s
+/// is a generous ceiling that still prevents a corrupted file from wedging the
+/// entire sync.
+const FPCALC_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Cap on any single HTTP response body. AcoustID and MusicBrainz responses
+/// for a single recording are well under 100 KiB in practice; 2 MiB leaves
+/// plenty of headroom while stopping a malicious or broken endpoint from
+/// buffering unbounded data into RAM.
+const HTTP_RESPONSE_CAP: u64 = 2 * 1024 * 1024;
+
+fn read_json_capped<T>(resp: ureq::Response) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(16 * 1024);
+    resp.into_reader()
+        .take(HTTP_RESPONSE_CAP + 1)
+        .read_to_end(&mut buf)
+        .context("read HTTP body")?;
+    if buf.len() as u64 > HTTP_RESPONSE_CAP {
+        anyhow::bail!("HTTP response exceeded {} bytes", HTTP_RESPONSE_CAP);
+    }
+    serde_json::from_slice(&buf).context("decode JSON")
+}
+
 fn fingerprint(path: &Path) -> Result<(u32, String)> {
-    let out = Command::new("fpcalc")
+    let mut child = Command::new("fpcalc")
         .arg("-json")
         .arg(path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .output()
+        .spawn()
         .context("spawn fpcalc")?;
-    if !out.status.success() {
+
+    let status = match child.wait_timeout(FPCALC_TIMEOUT) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!(
+                "fpcalc timed out after {}s on {}",
+                FPCALC_TIMEOUT.as_secs(),
+                path.display()
+            );
+        }
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("fpcalc wait_timeout error: {e}");
+        }
+    };
+
+    let out = child.wait_with_output().context("collect fpcalc output")?;
+    if !status.success() {
         anyhow::bail!(
             "fpcalc exited {}: {}",
-            out.status,
+            status,
             String::from_utf8_lossy(&out.stderr).trim()
         );
     }

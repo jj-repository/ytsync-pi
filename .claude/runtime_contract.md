@@ -27,8 +27,13 @@ PRAGMAs: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`.
 ## Failure handling
 
 - Retries: `retries` attempts per item with `retry_backoff_sec` linear backoff
-- After final attempt, item goes into `failures` and the run continues
+- Wall-clock budget: `per_item_timeout_sec` applies across all attempts for the item, not per attempt — retries cannot blow past that budget
+- After final attempt, item goes into `failures` (full stderr is persisted there for later inspection) and the run continues
+- `failures` rows older than 90 days are pruned at the start of each run
+- Partial `.part` / `.ytdl` files in the output dirs are swept at preflight — yt-dlp never resumes them on the next run, so they would otherwise accumulate
 - On next invocation, failed items are re-attempted (subject to the same cap per run)
+- If `--download-archive` already has a video id but the DB does not (e.g. a previous run crashed between archive write and DB commit), the next run detects the drift and reconciles the DB row without re-downloading
+- SIGTERM from systemd breaks between items; the run row is always finalized with an `aborted=true` note rather than left with `finished_at=NULL`
 - Run summary is always written to `runs`, even on partial failures
 - Any `fail_count > 0` triggers a single ntfy notification at end of run (priority 3)
 - A sticky `cookies_suspicious` flag on the run row triggers a separate, higher-priority ntfy alert (priority 4) so cookie-expiration is surfaced even in runs where download failures are otherwise few

@@ -84,7 +84,7 @@ impl YtDlpChannel {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct NtfyConfig {
     pub server: String,
     pub topic: String,
@@ -95,11 +95,38 @@ pub struct NtfyConfig {
     pub token: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+impl std::fmt::Debug for NtfyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NtfyConfig")
+            .field("server", &self.server)
+            .field("topic", &self.topic)
+            .field("enabled", &self.enabled)
+            .field("token", &redact(self.token.as_deref()))
+            .finish()
+    }
+}
+
+#[derive(Deserialize, Clone)]
 pub struct MusicBrainzConfig {
     pub acoustid_api_key: String,
     #[serde(default = "default_mb_enabled")]
     pub enabled: bool,
+}
+
+impl std::fmt::Debug for MusicBrainzConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MusicBrainzConfig")
+            .field("acoustid_api_key", &redact(Some(&self.acoustid_api_key)))
+            .field("enabled", &self.enabled)
+            .finish()
+    }
+}
+
+fn redact(secret: Option<&str>) -> &'static str {
+    match secret {
+        Some(s) if !s.is_empty() => "***set***",
+        _ => "<unset>",
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]

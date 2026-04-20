@@ -10,6 +10,7 @@ mod lock;
 mod musicbrainz;
 mod ntfy;
 mod preflight;
+mod shutdown;
 mod sync;
 mod ytdlp;
 mod ytdlp_updater;
@@ -116,6 +117,8 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
 
     let notifier = ntfy::Notifier::from_config(cfg.ntfy.clone());
     let host = hostname();
+    let shutdown =
+        shutdown::ShutdownFlag::install().context("install signal handlers for SIGTERM/SIGINT")?;
 
     let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
     if let Err(e) = updater.ensure_installed() {
@@ -142,10 +145,18 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         .unwrap_or_else(|e| format!("<version probe failed: {e}>"));
     info!("yt-dlp version: {version}");
 
-    let stats = sync::run_sync(&cfg, &database, &updater);
+    match database.prune_failures(90) {
+        Ok(0) => {}
+        Ok(n) => info!("pruned {n} failure row(s) older than 90 days"),
+        Err(e) => warn!("prune_failures: {e}"),
+    }
+
+    let stats = tracing::info_span!("run", id = run_id)
+        .in_scope(|| sync::run_sync(&cfg, &database, &updater, &shutdown));
+    let aborted = shutdown.is_set();
 
     let notes = format!(
-        "yt-dlp={version}; ok={} fail={} skipped_sources={} tagged={} tag_no_match={} tag_skipped={} cookies_suspicious={}",
+        "yt-dlp={version}; ok={} fail={} skipped_sources={} tagged={} tag_no_match={} tag_skipped={} cookies_suspicious={} aborted={}",
         stats.ok,
         stats.failed,
         stats.skipped_sources,
@@ -153,7 +164,11 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         stats.tag_no_match,
         stats.tag_skipped,
         stats.cookies_suspicious,
+        aborted,
     );
+    if aborted {
+        warn!("run {run_id} interrupted by SIGTERM/SIGINT; finalizing partial stats");
+    }
     database.finish_run(
         run_id,
         stats.ok,

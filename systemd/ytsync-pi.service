@@ -5,14 +5,22 @@ Documentation=https://github.com/jj-repository/ytsync-pi
 # network is up, and bail cleanly if the NAS mount is not available.
 After=network-online.target
 Wants=network-online.target
-# Edit the path below to match where the NAS music/video dirs live.
-# RequiresMountsFor=/mnt/nas
+# NAS mount requirement. systemd refuses to start if the mount is not ready,
+# which prevents silent fallback to local disk. Edit the path to match where
+# your NAS is mounted; if you do not use a network mount, delete the line.
+RequiresMountsFor=/mnt/nas
 
 [Service]
 Type=oneshot
 # Exit code 2 = another run holds the flock. Not a failure.
 SuccessExitStatus=2
 ExecStart=%h/.local/bin/ytsync-pi run
+# SIGTERM gets 5 minutes to unwind cleanly (finalize the run row, drop the DB
+# handle, release the flock) before systemd escalates to SIGKILL.
+TimeoutStopSec=300s
+# Explicit OOM policy — stop the unit cleanly on memory-cap breach rather than
+# letting the kernel freeze the cgroup.
+OOMPolicy=stop
 
 # --- Resource caps ---
 # Tight caps so the Pi does not notice this running alongside Pi-hole,

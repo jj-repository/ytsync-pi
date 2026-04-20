@@ -6,6 +6,7 @@ use tracing::{info, warn};
 use crate::config::{Config, Source, SourceMode};
 use crate::db::{Db, ItemMode};
 use crate::musicbrainz::{TagOutcome, Tagger};
+use crate::shutdown::ShutdownFlag;
 use crate::ytdlp::{archive_path_for, DownloadResult, PlaylistEntry, YtDlp};
 use crate::ytdlp_updater::YtDlpUpdater;
 
@@ -27,11 +28,17 @@ struct SyncCtx<'a> {
     tagger: Option<Tagger>,
     archive: PathBuf,
     updated_this_run: bool,
+    shutdown: &'a ShutdownFlag,
     stats: SyncStats,
 }
 
 /// Orchestrates one sync cycle across every configured source, audio and video.
-pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
+pub fn run_sync(
+    cfg: &Config,
+    db: &Db,
+    updater: &YtDlpUpdater,
+    shutdown: &ShutdownFlag,
+) -> SyncStats {
     let archive = match archive_path_for(cfg) {
         Ok(p) => p,
         Err(e) => {
@@ -57,6 +64,7 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
         tagger,
         archive,
         updated_this_run: false,
+        shutdown,
         stats: SyncStats {
             ok: 0,
             failed: 0,
@@ -69,6 +77,10 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
     };
 
     for source in &cfg.sources {
+        if ctx.shutdown.is_set() {
+            warn!("shutdown requested; skipping remaining sources");
+            break;
+        }
         let mode = match source.mode {
             SourceMode::Audio => ItemMode::Audio,
             SourceMode::Video => ItemMode::Video,
@@ -141,8 +153,15 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, mode: ItemMode, entries: &[P
     );
 
     for entry in new_items {
+        if ctx.shutdown.is_set() {
+            warn!(
+                "shutdown requested; stopping source {:?} after {} ok / {} fail",
+                source.name, ctx.stats.ok, ctx.stats.failed
+            );
+            break;
+        }
         match download_with_retries(ctx, source, mode, &entry) {
-            Ok(result) => {
+            Ok(Some(result)) => {
                 if let Err(e) = ctx.db.mark_done(
                     &entry.id,
                     &source.name,
@@ -158,18 +177,40 @@ fn sync_entries(ctx: &mut SyncCtx, source: &Source, mode: ItemMode, entries: &[P
                     enrich_tags(ctx, &result);
                 }
             }
-            Err(err_msg) => {
+            Ok(None) => {
+                // yt-dlp archive already had this id but our DB did not — a
+                // previous run recorded the archive entry then failed to
+                // commit the DB row. Reconcile silently.
+                info!(
+                    "↺ {}: already in yt-dlp archive; reconciling DB entry",
+                    entry.id
+                );
+                let placeholder = std::path::PathBuf::from("(archive-hit)");
                 if let Err(e) = ctx
                     .db
-                    .record_failure(&entry.id, &source.name, mode, &err_msg)
+                    .mark_done(&entry.id, &source.name, mode, None, &placeholder)
+                {
+                    warn!("db mark_done failed for {}: {e}", entry.id);
+                }
+                ctx.stats.ok += 1;
+            }
+            Err(err) => {
+                if let Err(e) = ctx
+                    .db
+                    .record_failure(&entry.id, &source.name, mode, &err.full)
                 {
                     warn!("db record_failure failed for {}: {e}", entry.id);
                 }
-                warn!("✗ {}: {err_msg}", entry.id);
+                warn!("✗ {}: {}", entry.id, err.display);
                 ctx.stats.failed += 1;
             }
         }
     }
+}
+
+pub struct AttemptError {
+    pub display: String, // short, safe to log
+    pub full: String,    // full stderr for forensic storage in `failures`
 }
 
 fn download_with_retries(
@@ -177,7 +218,7 @@ fn download_with_retries(
     source: &Source,
     mode: ItemMode,
     entry: &PlaylistEntry,
-) -> Result<DownloadResult, String> {
+) -> Result<Option<DownloadResult>, AttemptError> {
     let attempts = ctx.cfg.retries.saturating_add(1).max(1);
     let archive: PathBuf = ctx.archive.clone();
     let output_dir: PathBuf = match mode {
@@ -185,9 +226,32 @@ fn download_with_retries(
         ItemMode::Video => ctx.cfg.output_video_dir.clone(),
     };
     let quality_cap = source.quality.clone();
-    let mut last_err = String::new();
+    let mut last_display = String::new();
+    let mut last_full = String::new();
+    let item_start = std::time::Instant::now();
+    let item_budget = Duration::from_secs(ctx.cfg.per_item_timeout_sec);
 
     for attempt in 1..=attempts {
+        if ctx.shutdown.is_set() {
+            return Err(AttemptError {
+                display: format!("attempt {attempt}/{attempts}: shutdown requested"),
+                full: "shutdown requested before attempt".to_string(),
+            });
+        }
+        // Enforce the per-item wall-clock budget across all attempts, not just
+        // per attempt. Prevents `retries × per_item_timeout` from bloating the
+        // service's total runtime.
+        let elapsed = item_start.elapsed();
+        if elapsed >= item_budget {
+            return Err(AttemptError {
+                display: format!(
+                    "item budget of {}s exhausted before attempt {attempt}",
+                    item_budget.as_secs()
+                ),
+                full: last_full.clone(),
+            });
+        }
+
         let res = match mode {
             ItemMode::Audio => ctx.yt.download_audio(&entry.id, &output_dir, &archive),
             ItemMode::Video => {
@@ -198,10 +262,15 @@ fn download_with_retries(
         match res {
             Ok(r) => return Ok(r),
             Err(e) => {
-                last_err = format!(
+                let snippet: String = e.stderr.trim().chars().take(300).collect();
+                last_display = format!(
                     "attempt {attempt}/{attempts}: {} (stderr: {})",
+                    e.message, snippet
+                );
+                last_full = format!(
+                    "attempt {attempt}/{attempts}: {}\n--- stderr ---\n{}",
                     e.message,
-                    e.stderr.trim().chars().take(300).collect::<String>()
+                    e.stderr.trim(),
                 );
                 if e.looks_like_auth {
                     flag_cookies_suspicious(ctx, &source.name, &e.stderr);
@@ -224,7 +293,10 @@ fn download_with_retries(
             }
         }
     }
-    Err(last_err)
+    Err(AttemptError {
+        display: last_display,
+        full: last_full,
+    })
 }
 
 /// Records that at least one yt-dlp call in this run returned a
