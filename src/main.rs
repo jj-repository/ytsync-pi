@@ -98,7 +98,13 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
 
     let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
     if let Err(e) = updater.ensure_installed() {
-        database.finish_run(run_id, 0, 0, Some(&format!("yt-dlp not installed: {e}")))?;
+        database.finish_run(
+            run_id,
+            0,
+            0,
+            Some(&format!("yt-dlp not installed: {e}")),
+            false,
+        )?;
         return Err(e);
     }
 
@@ -111,18 +117,31 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
     let stats = sync::run_sync(&cfg, &database, &updater);
 
     let notes = format!(
-        "yt-dlp={version}; ok={} fail={} skipped_sources={} tagged={} tag_no_match={} tag_skipped={}",
+        "yt-dlp={version}; ok={} fail={} skipped_sources={} tagged={} tag_no_match={} tag_skipped={} cookies_suspicious={}",
         stats.ok,
         stats.failed,
         stats.skipped_sources,
         stats.tagged,
         stats.tag_no_match,
         stats.tag_skipped,
+        stats.cookies_suspicious,
     );
-    database.finish_run(run_id, stats.ok, stats.failed, Some(&notes))?;
+    database.finish_run(
+        run_id,
+        stats.ok,
+        stats.failed,
+        Some(&notes),
+        stats.cookies_suspicious,
+    )?;
+    if stats.cookies_suspicious {
+        warn!(
+            "run {run_id} finished with cookies_suspicious=TRUE — re-export your browser cookies to {}",
+            cfg.cookies_path.display()
+        );
+    }
     info!(
-        "run {run_id} finished: ok={} fail={} skipped_sources={} tagged={}",
-        stats.ok, stats.failed, stats.skipped_sources, stats.tagged
+        "run {run_id} finished: ok={} fail={} skipped_sources={} tagged={} cookies_suspicious={}",
+        stats.ok, stats.failed, stats.skipped_sources, stats.tagged, stats.cookies_suspicious,
     );
     Ok(())
 }
@@ -136,11 +155,17 @@ fn cmd_status(cfg_path: &std::path::Path) -> Result<()> {
             println!("  started_at:       {}", s.started_at);
             println!("  finished_at:      {:?}", s.finished_at);
             println!("  ok / fail:        {} / {}", s.ok_count, s.fail_count);
+            if s.cookies_suspicious {
+                println!("  ⚠ cookies:         LIKELY EXPIRED — re-export from browser");
+            }
             if let Some(n) = s.notes {
                 println!("  notes:            {n}");
             }
         }
         None => println!("no runs recorded yet"),
+    }
+    if let Some(run_id) = database.last_cookies_warning_run()? {
+        println!("last cookies warning at run #{run_id}");
     }
     println!("open failures:      {}", database.failure_count()?);
     Ok(())

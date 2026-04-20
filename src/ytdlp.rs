@@ -29,6 +29,7 @@ pub struct YtDlpError {
     pub stderr: String,
     pub exit_code: Option<i32>,
     pub looks_like_extractor: bool,
+    pub looks_like_auth: bool,
     pub timed_out: bool,
 }
 
@@ -76,6 +77,7 @@ impl<'a> YtDlp<'a> {
                 message: format!("playlist listing failed for {url}"),
                 exit_code: out.exit_status.code(),
                 looks_like_extractor: YtDlpUpdater::looks_like_extraction_failure(&out.stderr),
+                looks_like_auth: YtDlpUpdater::looks_like_auth_failure(&out.stderr),
                 stderr: out.stderr,
                 timed_out: false,
             });
@@ -114,6 +116,7 @@ impl<'a> YtDlp<'a> {
             stderr: String::new(),
             exit_code: None,
             looks_like_extractor: false,
+            looks_like_auth: false,
             timed_out: false,
         })?;
         if let Some(parent) = archive_path.parent() {
@@ -122,6 +125,7 @@ impl<'a> YtDlp<'a> {
                 stderr: String::new(),
                 exit_code: None,
                 looks_like_extractor: false,
+                looks_like_auth: false,
                 timed_out: false,
             })?;
         }
@@ -173,6 +177,7 @@ impl<'a> YtDlp<'a> {
                 message: format!("download failed for {video_id}"),
                 exit_code: out.exit_status.code(),
                 looks_like_extractor: YtDlpUpdater::looks_like_extraction_failure(&out.stderr),
+                looks_like_auth: YtDlpUpdater::looks_like_auth_failure(&out.stderr),
                 stderr: out.stderr,
                 timed_out: false,
             });
@@ -191,6 +196,7 @@ impl<'a> YtDlp<'a> {
                 stderr: out.stderr.clone(),
                 exit_code: out.exit_status.code(),
                 looks_like_extractor: false,
+                looks_like_auth: false,
                 timed_out: false,
             })?;
 
@@ -219,6 +225,7 @@ fn run_with_timeout(
         stderr: String::new(),
         exit_code: None,
         looks_like_extractor: false,
+        looks_like_auth: false,
         timed_out: false,
     })?;
 
@@ -233,6 +240,7 @@ fn run_with_timeout(
                 stderr: String::new(),
                 exit_code: None,
                 looks_like_extractor: false,
+                looks_like_auth: false,
                 timed_out: true,
             });
         }
@@ -244,6 +252,7 @@ fn run_with_timeout(
                 stderr: String::new(),
                 exit_code: None,
                 looks_like_extractor: false,
+                looks_like_auth: false,
                 timed_out: false,
             });
         }
@@ -254,6 +263,7 @@ fn run_with_timeout(
         stderr: String::new(),
         exit_code: None,
         looks_like_extractor: false,
+        looks_like_auth: false,
         timed_out: false,
     })?;
 

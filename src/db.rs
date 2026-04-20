@@ -71,6 +71,20 @@ impl Db {
             );
             "#,
         )?;
+        // Migration: cookies_suspicious column was added after the initial
+        // schema. ALTER is idempotent via the PRAGMA check below so the
+        // upgrade path is safe on existing databases.
+        let has_col: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('runs') WHERE name = 'cookies_suspicious'",
+            [],
+            |r| r.get(0),
+        )?;
+        if has_col == 0 {
+            self.conn.execute(
+                "ALTER TABLE runs ADD COLUMN cookies_suspicious INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -137,20 +151,35 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
-    pub fn finish_run(&self, run_id: i64, ok: u64, fail: u64, notes: Option<&str>) -> Result<()> {
+    pub fn finish_run(
+        &self,
+        run_id: i64,
+        ok: u64,
+        fail: u64,
+        notes: Option<&str>,
+        cookies_suspicious: bool,
+    ) -> Result<()> {
         self.conn.execute(
-            "UPDATE runs SET finished_at = ?1, ok_count = ?2, fail_count = ?3, notes = ?4 WHERE id = ?5",
-            params![now_epoch(), ok as i64, fail as i64, notes, run_id],
+            "UPDATE runs SET finished_at = ?1, ok_count = ?2, fail_count = ?3, notes = ?4, cookies_suspicious = ?5 WHERE id = ?6",
+            params![
+                now_epoch(),
+                ok as i64,
+                fail as i64,
+                notes,
+                if cookies_suspicious { 1 } else { 0 },
+                run_id,
+            ],
         )?;
         Ok(())
     }
 
     pub fn last_run_summary(&self) -> Result<Option<RunSummary>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, started_at, finished_at, ok_count, fail_count, notes FROM runs ORDER BY id DESC LIMIT 1",
+            "SELECT id, started_at, finished_at, ok_count, fail_count, notes, cookies_suspicious FROM runs ORDER BY id DESC LIMIT 1",
         )?;
         let mut rows = stmt.query([])?;
         if let Some(row) = rows.next()? {
+            let cookies_suspicious: i64 = row.get(6)?;
             Ok(Some(RunSummary {
                 id: row.get(0)?,
                 started_at: row.get(1)?,
@@ -158,7 +187,22 @@ impl Db {
                 ok_count: row.get(3)?,
                 fail_count: row.get(4)?,
                 notes: row.get(5)?,
+                cookies_suspicious: cookies_suspicious != 0,
             }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Returns the run id of the most recent run that flagged cookies_suspicious,
+    /// if any.
+    pub fn last_cookies_warning_run(&self) -> Result<Option<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM runs WHERE cookies_suspicious = 1 ORDER BY id DESC LIMIT 1")?;
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(row.get(0)?))
         } else {
             Ok(None)
         }
@@ -180,6 +224,7 @@ pub struct RunSummary {
     pub ok_count: i64,
     pub fail_count: i64,
     pub notes: Option<String>,
+    pub cookies_suspicious: bool,
 }
 
 fn now_epoch() -> i64 {

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread::sleep;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -16,6 +16,7 @@ pub struct SyncStats {
     pub tagged: u64,
     pub tag_no_match: u64,
     pub tag_skipped: u64,
+    pub cookies_suspicious: bool,
 }
 
 struct SyncCtx<'a> {
@@ -43,6 +44,7 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
                 tagged: 0,
                 tag_no_match: 0,
                 tag_skipped: 0,
+                cookies_suspicious: false,
             };
         }
     };
@@ -63,6 +65,7 @@ pub fn run_sync(cfg: &Config, db: &Db, updater: &YtDlpUpdater) -> SyncStats {
             tagged: 0,
             tag_no_match: 0,
             tag_skipped: 0,
+            cookies_suspicious: false,
         },
     };
 
@@ -92,6 +95,9 @@ fn sync_audio_source(ctx: &mut SyncCtx, source: &Source) {
                 e.message,
                 e.stderr.trim()
             );
+            if e.looks_like_auth {
+                flag_cookies_suspicious(ctx, &source.name, &e.stderr);
+            }
             if e.looks_like_extractor
                 && !ctx.updated_this_run
                 && ctx.cfg.yt_dlp.update_on_extract_error
@@ -173,13 +179,12 @@ fn download_with_retries(
     entry: &PlaylistEntry,
 ) -> Result<DownloadResult, String> {
     let attempts = ctx.cfg.retries.saturating_add(1).max(1);
-    let archive: &Path = &ctx.archive;
+    let archive: PathBuf = ctx.archive.clone();
+    let output_dir: PathBuf = ctx.cfg.output_audio_dir.clone();
     let mut last_err = String::new();
 
     for attempt in 1..=attempts {
-        let res = ctx
-            .yt
-            .download_audio(&entry.id, &ctx.cfg.output_audio_dir, archive);
+        let res = ctx.yt.download_audio(&entry.id, &output_dir, &archive);
         match res {
             Ok(r) => return Ok(r),
             Err(e) => {
@@ -188,6 +193,9 @@ fn download_with_retries(
                     e.message,
                     e.stderr.trim().chars().take(300).collect::<String>()
                 );
+                if e.looks_like_auth {
+                    flag_cookies_suspicious(ctx, &source.name, &e.stderr);
+                }
                 if e.looks_like_extractor
                     && !ctx.updated_this_run
                     && ctx.cfg.yt_dlp.update_on_extract_error
@@ -207,6 +215,21 @@ fn download_with_retries(
         }
     }
     Err(last_err)
+}
+
+/// Records that at least one yt-dlp call in this run returned a
+/// cookies/auth-rejection signature. We only log the loud banner once per run
+/// so journald stays readable, but the sticky flag lives on through
+/// `finish_run` and a phase-7 ntfy alert.
+fn flag_cookies_suspicious(ctx: &mut SyncCtx, source_name: &str, stderr: &str) {
+    if !ctx.stats.cookies_suspicious {
+        warn!(
+            "🍪 cookies likely expired (source {:?}) — re-export your browser cookies. stderr snippet: {}",
+            source_name,
+            stderr.trim().chars().take(200).collect::<String>()
+        );
+    }
+    ctx.stats.cookies_suspicious = true;
 }
 
 fn enrich_tags(ctx: &mut SyncCtx, result: &DownloadResult) {

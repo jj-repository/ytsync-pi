@@ -20,6 +20,27 @@ const EXTRACTION_ERROR_SIGNATURES: &[&str] = &[
     "no longer available",
 ];
 
+/// Known stderr substrings that suggest the cookies file is stale — i.e.
+/// YouTube rejected it for auth, not because an extractor broke. These drive
+/// a separate notification path so the user knows to re-export cookies rather
+/// than wait for yt-dlp to update itself.
+const AUTH_FAILURE_SIGNATURES: &[&str] = &[
+    "sign in to confirm",
+    "sign in, to confirm",
+    "not a bot",
+    "login required",
+    "please log in",
+    "http error 401",
+    "private video",
+    "members-only content",
+    "this video is available to this channel's members",
+    "the uploader has not made this video available",
+    "cookies provided do not match",
+    "cookies are no longer valid",
+    "your cookies are expired",
+    "requested content is not available, rechecking",
+];
+
 pub struct YtDlpUpdater {
     cfg: YtDlpConfig,
 }
@@ -186,6 +207,16 @@ impl YtDlpUpdater {
             .any(|sig| lower.contains(sig))
     }
 
+    /// Returns true if `stderr_text` looks like cookies have expired or been
+    /// rejected by YouTube. Distinct from extractor-failure — the fix is
+    /// re-exporting cookies, not bumping yt-dlp.
+    pub fn looks_like_auth_failure(stderr_text: &str) -> bool {
+        let lower = stderr_text.to_ascii_lowercase();
+        AUTH_FAILURE_SIGNATURES
+            .iter()
+            .any(|sig| lower.contains(sig))
+    }
+
     pub fn binary_path(&self) -> PathBuf {
         self.cfg.binary_path.clone()
     }
@@ -240,5 +271,32 @@ mod tests {
         assert!(!YtDlpUpdater::looks_like_extraction_failure(
             "disk full: no space left on device"
         ));
+    }
+
+    #[test]
+    fn detects_known_auth_failures() {
+        for sig in [
+            "ERROR: Sign in to confirm you're not a bot",
+            "ERROR: Private video. Sign in if you've been granted access",
+            "ERROR: members-only content",
+            "HTTP Error 401: Unauthorized",
+            "ERROR: The uploader has not made this video available",
+            "requested content is not available, rechecking",
+        ] {
+            assert!(
+                YtDlpUpdater::looks_like_auth_failure(sig),
+                "auth signature should match: {sig}"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_and_extraction_classifiers_are_disjoint_on_clear_cases() {
+        let auth = "ERROR: Sign in to confirm you're not a bot";
+        let extract = "ERROR: Unable to extract player response";
+        assert!(YtDlpUpdater::looks_like_auth_failure(auth));
+        assert!(!YtDlpUpdater::looks_like_auth_failure(extract));
+        assert!(YtDlpUpdater::looks_like_extraction_failure(extract));
+        assert!(!YtDlpUpdater::looks_like_extraction_failure(auth));
     }
 }
