@@ -18,6 +18,10 @@ ExecStart=%h/.local/bin/ytsync-pi run
 # SIGTERM gets 5 minutes to unwind cleanly (finalize the run row, drop the DB
 # handle, release the flock) before systemd escalates to SIGKILL.
 TimeoutStopSec=300s
+# Upper bound on how long a single run may take before systemd kills it. Covers
+# worst-case: per_item_timeout_sec × items × retries plus a yt-dlp self-update.
+# 2h is generous for a nightly Pi sync; any hang longer than this is pathological.
+TimeoutStartSec=7200s
 # Explicit OOM policy — stop the unit cleanly on memory-cap breach rather than
 # letting the kernel freeze the cgroup.
 OOMPolicy=stop

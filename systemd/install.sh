@@ -7,11 +7,48 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 mkdir -p "$UNIT_DIR"
 
+FORCE=0
+for arg in "$@"; do
+    case "$arg" in
+        -f|--force) FORCE=1 ;;
+        -h|--help)
+            cat <<USAGE
+Usage: $(basename "$0") [--force]
+
+  (no args)  Install fresh. Refuses to overwrite existing unit files so local
+             edits (e.g. NAS mount path in ReadWritePaths) aren't silently
+             reverted on a re-run.
+  --force    Overwrite existing unit files unconditionally.
+USAGE
+            exit 0 ;;
+        *) echo "unknown arg: $arg" >&2; exit 2 ;;
+    esac
+done
+
+UNITS=(ytsync-pi.service ytsync-pi.timer ytsync-pi-canary.service ytsync-pi-canary.timer)
+
+if [[ $FORCE -eq 0 ]]; then
+    EXISTING=()
+    for unit in "${UNITS[@]}"; do
+        if [[ -e "$UNIT_DIR/$unit" ]] && ! cmp -s "$SCRIPT_DIR/$unit" "$UNIT_DIR/$unit"; then
+            EXISTING+=("$unit")
+        fi
+    done
+    if [[ ${#EXISTING[@]} -gt 0 ]]; then
+        echo "Refusing to overwrite existing (possibly user-edited) unit files:" >&2
+        for u in "${EXISTING[@]}"; do echo "  $UNIT_DIR/$u" >&2; done
+        echo >&2
+        echo "If you meant to replace them, re-run with --force." >&2
+        echo "Otherwise, diff and merge changes by hand:" >&2
+        echo "  diff -u $UNIT_DIR/${EXISTING[0]} $SCRIPT_DIR/${EXISTING[0]}" >&2
+        exit 1
+    fi
+fi
+
 echo "Installing unit files into $UNIT_DIR"
-install -m 0644 "$SCRIPT_DIR/ytsync-pi.service"         "$UNIT_DIR/ytsync-pi.service"
-install -m 0644 "$SCRIPT_DIR/ytsync-pi.timer"           "$UNIT_DIR/ytsync-pi.timer"
-install -m 0644 "$SCRIPT_DIR/ytsync-pi-canary.service"  "$UNIT_DIR/ytsync-pi-canary.service"
-install -m 0644 "$SCRIPT_DIR/ytsync-pi-canary.timer"    "$UNIT_DIR/ytsync-pi-canary.timer"
+for unit in "${UNITS[@]}"; do
+    install -m 0644 "$SCRIPT_DIR/$unit" "$UNIT_DIR/$unit"
+done
 
 echo "Reloading user systemd"
 systemctl --user daemon-reload
