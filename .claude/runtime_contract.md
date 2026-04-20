@@ -30,7 +30,9 @@ PRAGMAs: `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`.
 - After final attempt, item goes into `failures` and the run continues
 - On next invocation, failed items are re-attempted (subject to the same cap per run)
 - Run summary is always written to `runs`, even on partial failures
-- Any `fail_count > 0` triggers a single ntfy notification at end of run
+- Any `fail_count > 0` triggers a single ntfy notification at end of run (priority 3)
+- A sticky `cookies_suspicious` flag on the run row triggers a separate, higher-priority ntfy alert (priority 4) so cookie-expiration is surfaced even in runs where download failures are otherwise few
+- ntfy failures are logged but never escalate — the run itself has already been recorded in SQLite
 
 ## Idempotency
 

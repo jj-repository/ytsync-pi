@@ -77,7 +77,27 @@ systemctl --user list-timers
 systemctl --user status ytsync-pi.service
 journalctl --user -u ytsync-pi.service -f
 ytsync-pi status               # DB-backed run summary + cookies flag
+ytsync-pi test-ntfy            # confirm alerts reach your device
 ```
+
+## Alerts
+
+Set `[ntfy]` in `config.toml`:
+
+```
+[ntfy]
+server  = "https://ntfy.sh"
+topic   = "ytsync-pi-alerts"
+enabled = true
+# token = "tk_…"   # optional, for protected topics
+```
+
+Subscribe on your phone/desktop to that topic. Two alert types fire:
+
+- **priority 3 (default)** — one per run with `fail_count > 0`
+- **priority 4 (warning)** — whenever yt-dlp stderr matches auth/cookie signatures (separate from download-failures so cookie expiration is never masked)
+
+Send a one-off test with `ytsync-pi test-ntfy`.
 
 ## Resource ceiling
 

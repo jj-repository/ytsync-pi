@@ -1,12 +1,14 @@
-// Phase 3: config/DB/yt-dlp error surfaces exist for MusicBrainz (phase 4),
-// video mode (phase 5), and ntfy (phase 7). Remove this allow as those
-// phases wire the fields in.
+// A handful of struct fields (YtDlpError diagnostics, UpdateOutcome stdout,
+// config.bitrate) exist as stable public surface for subprocess wrappers but
+// are not yet read back at the call sites. Keep them so future logging /
+// telemetry work doesn't have to re-break the API.
 #![allow(dead_code)]
 
 mod config;
 mod db;
 mod lock;
 mod musicbrainz;
+mod ntfy;
 mod preflight;
 mod sync;
 mod ytdlp;
@@ -45,6 +47,8 @@ enum Command {
     ShowConfig,
     /// Force an immediate yt-dlp self-update regardless of binary age
     UpdateYtdlp,
+    /// Send a test ntfy notification to confirm alert delivery
+    TestNtfy,
 }
 
 fn main() -> Result<()> {
@@ -67,7 +71,21 @@ fn main() -> Result<()> {
         Command::TestCookies => cmd_test_cookies(&cfg_path),
         Command::ShowConfig => cmd_show_config(&cfg_path),
         Command::UpdateYtdlp => cmd_update_ytdlp(&cfg_path),
+        Command::TestNtfy => cmd_test_ntfy(&cfg_path),
     }
+}
+
+fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "unknown-host".to_string())
 }
 
 fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
@@ -96,15 +114,25 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         cfg.sources.len()
     );
 
+    let notifier = ntfy::Notifier::from_config(cfg.ntfy.clone());
+    let host = hostname();
+
     let updater = ytdlp_updater::YtDlpUpdater::new(cfg.yt_dlp.clone());
     if let Err(e) = updater.ensure_installed() {
-        database.finish_run(
-            run_id,
-            0,
-            0,
-            Some(&format!("yt-dlp not installed: {e}")),
-            false,
-        )?;
+        let msg = format!("yt-dlp not installed: {e}");
+        database.finish_run(run_id, 0, 0, Some(&msg), false)?;
+        if let Some(n) = notifier.as_ref() {
+            let stats = sync::SyncStats {
+                ok: 0,
+                failed: 1,
+                skipped_sources: 0,
+                tagged: 0,
+                tag_no_match: 0,
+                tag_skipped: 0,
+                cookies_suspicious: false,
+            };
+            n.report_run(run_id, &stats, "<not installed>", &host);
+        }
         return Err(e);
     }
 
@@ -143,6 +171,9 @@ fn cmd_run(cfg_path: &std::path::Path) -> Result<()> {
         "run {run_id} finished: ok={} fail={} skipped_sources={} tagged={} cookies_suspicious={}",
         stats.ok, stats.failed, stats.skipped_sources, stats.tagged, stats.cookies_suspicious,
     );
+    if let Some(n) = notifier.as_ref() {
+        n.report_run(run_id, &stats, &version, &host);
+    }
     Ok(())
 }
 
@@ -168,7 +199,66 @@ fn cmd_status(cfg_path: &std::path::Path) -> Result<()> {
         println!("last cookies warning at run #{run_id}");
     }
     println!("open failures:      {}", database.failure_count()?);
+
+    if cfg.cookies_path.exists() {
+        if let Ok(meta) = std::fs::metadata(&cfg.cookies_path) {
+            if let Ok(modified) = meta.modified() {
+                let age = std::time::SystemTime::now()
+                    .duration_since(modified)
+                    .unwrap_or_default()
+                    .as_secs()
+                    / 86_400;
+                println!(
+                    "cookies file:       {} ({} days old)",
+                    cfg.cookies_path.display(),
+                    age
+                );
+            }
+        }
+    } else {
+        println!(
+            "cookies file:       MISSING at {}",
+            cfg.cookies_path.display()
+        );
+    }
+
+    let bin = &cfg.yt_dlp.binary_path;
+    if bin.exists() {
+        let age_days = std::fs::metadata(bin)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| std::time::SystemTime::now().duration_since(t).ok())
+            .map(|d| d.as_secs() / 86_400);
+        match age_days {
+            Some(days) => println!("yt-dlp binary:      {} ({days} days old)", bin.display()),
+            None => println!("yt-dlp binary:      {}", bin.display()),
+        }
+    } else {
+        println!("yt-dlp binary:      MISSING at {}", bin.display());
+    }
+
+    println!(
+        "ntfy alerts:        {}",
+        match &cfg.ntfy {
+            Some(n) if n.enabled => format!("enabled → {}/{}", n.server, n.topic),
+            Some(_) => "configured but disabled".to_string(),
+            None => "not configured".to_string(),
+        }
+    );
     Ok(())
+}
+
+fn cmd_test_ntfy(cfg_path: &std::path::Path) -> Result<()> {
+    let cfg = config::Config::load(cfg_path)?;
+    let notifier = ntfy::Notifier::from_config(cfg.ntfy.clone())
+        .ok_or_else(|| anyhow::anyhow!("ntfy not configured or disabled in {cfg_path:?}"))?;
+    let host = hostname();
+    if notifier.send_test(&host) {
+        println!("ntfy test notification sent");
+        Ok(())
+    } else {
+        anyhow::bail!("ntfy send failed — see log for details")
+    }
 }
 
 fn cmd_test_cookies(cfg_path: &std::path::Path) -> Result<()> {

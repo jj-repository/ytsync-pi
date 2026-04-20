@@ -13,15 +13,17 @@ v0.1.0 — scaffold only. `cargo check` passes; sync pipeline arrives in phase 2
 - **Resource-capped** by systemd (CPU 25%, RAM 200M, IO idle). Zero footprint between runs.
 - **State** in a small SQLite file, with yt-dlp's `--download-archive` as a second safety net.
 - **Auth** via an exported Netscape cookies file. OAuth intentionally avoided.
-- **Alerts** via ntfy, failures only.
+- **Alerts** via ntfy. Failures trigger one notification; an expired cookies file triggers a separate, higher-priority alert so it never goes unnoticed.
 
 ## Commands
 
 ```
 ytsync-pi run            # sync cycle (invoked by systemd timer)
-ytsync-pi status         # last run summary + open failures
-ytsync-pi test-cookies   # probe the cookies file
+ytsync-pi status         # last run summary, cookies/yt-dlp age, ntfy config
+ytsync-pi test-cookies   # probe the cookies file with a real playlist listing
+ytsync-pi test-ntfy      # send a test alert to confirm delivery
 ytsync-pi show-config    # print resolved config
+ytsync-pi update-ytdlp   # force an immediate yt-dlp self-update
 ```
 
 ## Config

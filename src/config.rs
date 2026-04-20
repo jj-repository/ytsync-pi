@@ -88,6 +88,11 @@ impl YtDlpChannel {
 pub struct NtfyConfig {
     pub server: String,
     pub topic: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Token for authenticated ntfy topics. Leave empty for public topics.
+    #[serde(default)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

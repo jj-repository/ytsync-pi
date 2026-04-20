@@ -6,7 +6,7 @@
 4. **MusicBrainz tagging** — Chromaprint (`fpcalc`) → AcoustID → MusicBrainz API → ID3 enrichment. 1 req/sec MB rate limit. ✅ **Done 2026-04-20.**
 5. **Video mode + retries** — `mode = "video"` sources, MKV output (`bv*+ba/b`, `--merge-output-format mkv`), per-item retry/backoff, failure table. ✅ **Done 2026-04-20.**
 6. **systemd unit + timer + hardening** — drop-in `.service`/`.timer`, resource caps, `RequiresMountsFor=`, journald logging. ✅ **Done 2026-04-20.**
-7. **Alerts + introspection** — ntfy on failures, `status` summary, `test-cookies` live probe.
+7. **Alerts + introspection** — ntfy on failures + cookies alert, `status` summary (cookies/yt-dlp age, alert config), `test-cookies` + `test-ntfy` probes. ✅ **Done 2026-04-20.**
 8. **Deploy + tune** — install on Pi, observe real load alongside Pi-hole/Headscale/NAS stack, tune caps.
 
 ## Decisions locked 2026-04-19

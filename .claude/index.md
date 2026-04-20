@@ -12,7 +12,7 @@ Rust daemon for a Raspberry Pi that syncs YouTube playlists / Liked Videos to a 
 
 ## Quick facts
 
-- **Invocation:** `ytsync-pi run` (systemd timer), `status`, `test-cookies`, `show-config`
+- **Invocation:** `ytsync-pi run` (systemd timer), `status`, `test-cookies`, `test-ntfy`, `show-config`, `update-ytdlp`
 - **Config path:** `~/.config/ytsync-pi/config.toml` (XDG), override with `-c`
 - **State:** SQLite at `~/.local/share/ytsync-pi/state.db`, yt-dlp archive as double-check
 - **Auth:** cookies file (`--cookies`), **not** OAuth
